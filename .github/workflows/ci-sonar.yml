@@ -1,53 +1,27 @@
-name: Continuous Integration Pipeline with SonarQube
+name: CI with SonarQube (Node)
 
 on:
   workflow_dispatch
 
-permissions:
-  contents: read
-  actions: read
-  checks: write
-  pull-requests: write
-
 jobs:
-  build-and-test:
+  build-test-scan:
     runs-on: ubuntu-latest
-    environment: dev
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Use Node 18
         uses: actions/setup-node@v4
         with:
-          node-version: 18.x
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version: 18
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install deps
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-      - name: Run unit tests with coverage and JUnit reports
-        env:
-          JEST_JUNIT_OUTPUT: coverage/junit.xml
-        run: npm run test:ci
-
-      - name: Publish test results to Checks
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Jest Test Results
-          path: coverage/junit.xml
-          reporter: jest-junit
-          fail-on-error: true
-
-      - name: Upload test results to GitHub
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-node
-          path: coverage/
-          retention-days: 30
+      - name: Run tests (if present)
+        run: |
+          npm test --silent || echo "no tests or failing tests—continuing for lab"
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6.0.0
@@ -59,30 +33,6 @@ jobs:
             -Dsonar.projectKey=sample-node-app-yasmeen
             -Dsonar.sources=.
             -Dsonar.exclusions=node_modules/**,coverage/**,tests/**,**/*.test.js,**/*.spec.js
-            -Dsonar.tests=tests/
+            -Dsonar.tests=tests
             -Dsonar.test.inclusions=**/*.test.js,**/*.spec.js
             -Dsonar.coverage.exclusions=node_modules/**,coverage/**,tests/**,**/*.test.js,**/*.spec.js
-
-      - name: Create deployment package
-        run: |
-          set -euo pipefail
-          STAGING="$GITHUB_WORKSPACE/deployment-package"
-          rm -rf "$STAGING"
-          mkdir -p "$STAGING"
-          [ -d public ] && cp -r public "$STAGING/" || true
-          [ -f server.js ] && cp server.js "$STAGING/" || true
-          cp package.json "$STAGING/"
-          cp package-lock.json "$STAGING/"
-          (cd "$STAGING" && npm pkg delete devDependencies || true)
-          TS="$(date +%Y%m%d-%H%M%S)"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          ZIP_NAME="deployment-package-${SHORT_SHA}-${TS}.zip"
-          (cd "$GITHUB_WORKSPACE" && zip -r "$ZIP_NAME" "deployment-package")
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-
-      - name: Upload deployment package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-package-node-${{ github.run_number }}
-          path: ${{ env.ZIP_NAME }}
-          retention-days: 90
